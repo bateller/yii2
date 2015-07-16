@@ -64,11 +64,11 @@ class AssetManager extends Component
      */
     public $bundles = [];
     /**
-     * @return string the root directory storing the published asset files.
+     * @var string the root directory storing the published asset files.
      */
     public $basePath = '@webroot/assets';
     /**
-     * @return string the base URL through which the published asset files can be accessed.
+     * @var string the base URL through which the published asset files can be accessed.
      */
     public $baseUrl = '@web/assets';
     /**
@@ -81,7 +81,8 @@ class AssetManager extends Component
      * the corresponding value will replace the asset and be registered with the view.
      * For example, an asset file `my/path/to/jquery.js` matches a key `jquery.js`.
      *
-     * Note that the target asset files should be either absolute URLs or paths relative to [[baseUrl]] and [[basePath]].
+     * Note that the target asset files should be absolute URLs, domain relative URLs (starting from '/') or paths
+     * relative to [[baseUrl]] and [[basePath]].
      *
      * In the following example, any assets ending with `jquery.min.js` will be replaced with `jquery/dist/jquery.js`
      * which is relative to [[baseUrl]] and [[basePath]].
@@ -89,6 +90,14 @@ class AssetManager extends Component
      * ```php
      * [
      *     'jquery.min.js' => 'jquery/dist/jquery.js',
+     * ]
+     * ```
+     *
+     * You may also use aliases while specifying map value, for example:
+     *
+     * ```php
+     * [
+     *     'jquery.min.js' => '@web/js/jquery/jquery.js',
      * ]
      * ```
      */
@@ -150,6 +159,15 @@ class AssetManager extends Component
      * significantly degrade the performance.
      */
     public $forceCopy = false;
+    /**
+     * @var boolean whether to append a timestamp to the URL of every published asset. When this is true,
+     * the URL of a published asset may look like `/path/to/asset?v=timestamp`, where `timestamp` is the
+     * last modification time of the published asset file.
+     * You normally would want to set this property to true when you have enabled HTTP caching for assets,
+     * because it allows you to bust caching when the assets are updated.
+     * @since 2.0.3
+     */
+    public $appendTimestamp = false;
 
     private $_dummyBundles = [];
 
@@ -252,9 +270,28 @@ class AssetManager extends Component
     public function getAssetUrl($bundle, $asset)
     {
         if (($actualAsset = $this->resolveAsset($bundle, $asset)) !== false) {
-            return Url::isRelative($actualAsset) ? $this->baseUrl . '/' . $actualAsset : $actualAsset;
+            if (strncmp($actualAsset, '@web/', 5) === 0) {
+                $asset = substr($actualAsset, 5);
+                $basePath = Yii::getAlias("@webroot");
+                $baseUrl = Yii::getAlias("@web");
+            } else {
+                $asset = Yii::getAlias($actualAsset);
+                $basePath = $this->basePath;
+                $baseUrl = $this->baseUrl;
+            }
         } else {
-            return Url::isRelative($asset) ? $bundle->baseUrl . '/' . $asset : $asset;
+            $basePath = $bundle->basePath;
+            $baseUrl = $bundle->baseUrl;
+        }
+
+        if (!Url::isRelative($asset) || strncmp($asset, '/', 1) === 0) {
+            return $asset;
+        }
+
+        if ($this->appendTimestamp && ($timestamp = @filemtime("$basePath/$asset")) > 0) {
+            return "$baseUrl/$asset?v=$timestamp";
+        } else {
+            return "$baseUrl/$asset";
         }
     }
 
@@ -362,6 +399,9 @@ class AssetManager extends Component
      * @param array $options the options to be applied when publishing a directory.
      * The following options are supported:
      *
+     * - only: array, list of patterns that the file paths should match if they want to be copied.
+     * - except: array, list of patterns that the files or directories should match if they want to be excluded from being copied.
+     * - caseSensitive: boolean, whether patterns specified at "only" or "except" should be case sensitive. Defaults to true.
      * - beforeCopy: callback, a PHP callback that is called before copying each sub-directory or file.
      *   This overrides [[beforeCopy]] if set.
      * - afterCopy: callback, a PHP callback that is called after a sub-directory or file is successfully copied.
@@ -429,6 +469,9 @@ class AssetManager extends Component
      * @param array $options the options to be applied when publishing a directory.
      * The following options are supported:
      *
+     * - only: array, list of patterns that the file paths should match if they want to be copied.
+     * - except: array, list of patterns that the files or directories should match if they want to be excluded from being copied.
+     * - caseSensitive: boolean, whether patterns specified at "only" or "except" should be case sensitive. Defaults to true.
      * - beforeCopy: callback, a PHP callback that is called before copying each sub-directory or file.
      *   This overrides [[beforeCopy]] if set.
      * - afterCopy: callback, a PHP callback that is called after a sub-directory or file is successfully copied.
@@ -448,23 +491,24 @@ class AssetManager extends Component
             if (!is_dir($dstDir)) {
                 symlink($src, $dstDir);
             }
-        } elseif (!is_dir($dstDir) || !empty($options['forceCopy']) || (!isset($options['forceCopy']) && $this->forceCopy)) {
-            $opts = [
-                'dirMode' => $this->dirMode,
-                'fileMode' => $this->fileMode,
-            ];
-            if (isset($options['beforeCopy'])) {
-                $opts['beforeCopy'] = $options['beforeCopy'];
-            } elseif ($this->beforeCopy !== null) {
-                $opts['beforeCopy'] = $this->beforeCopy;
-            } else {
-                $opts['beforeCopy'] = function ($from, $to) {
-                    return strncmp(basename($from), '.', 1) !== 0;
-                };
+        } elseif (!empty($options['forceCopy']) || ($this->forceCopy && !isset($options['forceCopy'])) || !is_dir($dstDir)) {
+            $opts = array_merge(
+                $options,
+                [
+                    'dirMode' => $this->dirMode,
+                    'fileMode' => $this->fileMode,
+                ]
+            );
+            if (!isset($opts['beforeCopy'])) {
+                if ($this->beforeCopy !== null) {
+                    $opts['beforeCopy'] = $this->beforeCopy;
+                } else {
+                    $opts['beforeCopy'] = function ($from, $to) {
+                        return strncmp(basename($from), '.', 1) !== 0;
+                    };
+                }
             }
-            if (isset($options['afterCopy'])) {
-                $opts['afterCopy'] = $options['afterCopy'];
-            } elseif ($this->afterCopy !== null) {
+            if (!isset($opts['afterCopy']) && $this->afterCopy !== null) {
                 $opts['afterCopy'] = $this->afterCopy;
             }
             FileHelper::copyDirectory($src, $dstDir, $opts);

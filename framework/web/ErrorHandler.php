@@ -69,7 +69,12 @@ class ErrorHandler extends \yii\base\ErrorHandler
     {
         if (Yii::$app->has('response')) {
             $response = Yii::$app->getResponse();
+            // reset parameters of response to avoid interference with partially created response data
+            // in case the error occurred while sending the response.
             $response->isSent = false;
+            $response->stream = null;
+            $response->data = null;
+            $response->content = null;
         } else {
             $response = new Response();
         }
@@ -84,7 +89,7 @@ class ErrorHandler extends \yii\base\ErrorHandler
                 $response->data = $result;
             }
         } elseif ($response->format === Response::FORMAT_HTML) {
-            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest' || YII_ENV_TEST) {
+            if (YII_ENV_TEST || isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest') {
                 // AJAX request
                 $response->data = '<pre>' . $this->htmlEncode($this->convertExceptionToString($exception)) . '</pre>';
             } else {
@@ -371,8 +376,8 @@ class ErrorHandler extends \yii\base\ErrorHandler
 
         foreach ($args as $key => $value) {
             $count++;
-            if($count>=5) {
-                if($count>5) {
+            if ($count>=5) {
+                if ($count>5) {
                     unset($args[$key]);
                 } else {
                     $args[$key] = '...';
@@ -396,7 +401,7 @@ class ErrorHandler extends \yii\base\ErrorHandler
                 $args[$key] = '[' . $this->argumentsToString($value) . ']';
             } elseif ($value === null) {
                 $args[$key] = '<span class="keyword">null</span>';
-            } elseif(is_resource($value)) {
+            } elseif (is_resource($value)) {
                 $args[$key] = '<span class="keyword">resource</span>';
             } else {
                 $args[$key] = '<span class="number">' . $value . '</span>';
